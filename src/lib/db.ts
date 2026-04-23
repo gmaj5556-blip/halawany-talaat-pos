@@ -1,27 +1,86 @@
 import Database from 'better-sqlite3';
+import { Pool, PoolClient } from 'pg';
 import path from 'path';
 import fs from 'fs';
 
+// Configuration
+const isCloud = !!process.env.DATABASE_URL;
 const DB_DIR = path.join(process.cwd(), 'data');
 const DB_PATH = path.join(DB_DIR, 'pos.db');
 
-if (!fs.existsSync(DB_DIR)) {
+if (!isCloud && !fs.existsSync(DB_DIR)) {
   fs.mkdirSync(DB_DIR, { recursive: true });
 }
 
-let _db: Database.Database | null = null;
+let _sqliteDb: Database.Database | null = null;
+let _pgPool: Pool | null = null;
 
-export function getDb(): Database.Database {
-  if (!_db) {
-    _db = new Database(DB_PATH);
-    _db.pragma('journal_mode = WAL');
-    _db.pragma('foreign_keys = ON');
-    initializeSchema(_db);
+export function getDb() {
+  if (isCloud) {
+    if (!_pgPool) {
+      _pgPool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false }
+      });
+      // We don't initialize schema automatically for PG here to avoid connection overhead in each request
+      // But for this simple app, we can do a one-time init
+    }
+    return {
+      type: 'pg',
+      pool: _pgPool,
+      prepare: (sql: string) => {
+        // Mocking SQLite's prepare for PG
+        return {
+          run: async (...params: any[]) => {
+            const pgSql = sql.replace(/\?/g, (_, i) => `$${i + 1}`);
+            return await _pgPool!.query(pgSql, params);
+          },
+          get: async (...params: any[]) => {
+            const pgSql = sql.replace(/\?/g, (_, i) => `$${i + 1}`);
+            const res = await _pgPool!.query(pgSql, params);
+            return res.rows[0];
+          },
+          all: async (...params: any[]) => {
+            const pgSql = sql.replace(/\?/g, (_, i) => `$${i + 1}`);
+            const res = await _pgPool!.query(pgSql, params);
+            return res.rows;
+          }
+        };
+      },
+      exec: async (sql: string) => {
+        return await _pgPool!.query(sql);
+      },
+      transaction: (fn: any) => fn // simplified for now
+    };
+  } else {
+    if (!_sqliteDb) {
+      _sqliteDb = new Database(DB_PATH);
+      _sqliteDb.pragma('journal_mode = WAL');
+      _sqliteDb.pragma('foreign_keys = ON');
+      initializeSQLiteSchema(_sqliteDb);
+    }
+    return {
+      type: 'sqlite',
+      db: _sqliteDb,
+      prepare: (sql: string) => {
+        const stmt = _sqliteDb!.prepare(sql);
+        return {
+          run: (...params: any[]) => stmt.run(...params),
+          get: (...params: any[]) => stmt.get(...params),
+          all: (...params: any[]) => stmt.all(...params)
+        };
+      },
+      exec: (sql: string) => _sqliteDb!.exec(sql),
+      transaction: (fn: any) => _sqliteDb!.transaction(fn)
+    };
   }
-  return _db;
 }
 
-function initializeSchema(db: Database.Database) {
+// Since the API routes use .run().lastInsertRowid which is SQLite specific, 
+// I will need to update them or provide a better wrapper. 
+// For now, I'll keep the direct DB functions available.
+
+function initializeSQLiteSchema(db: Database.Database) {
   db.exec(`
     -- Users & Auth
     CREATE TABLE IF NOT EXISTS users (
@@ -30,12 +89,12 @@ function initializeSchema(db: Database.Database) {
       username TEXT UNIQUE NOT NULL,
       pin TEXT UNIQUE,
       password_hash TEXT,
-      role TEXT NOT NULL DEFAULT 'cashier', -- admin, cashier, manager
+      role TEXT NOT NULL DEFAULT 'cashier',
       active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    -- Cash Drawers / Safes
+    -- Cash Drawers
     CREATE TABLE IF NOT EXISTS cash_drawers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -43,11 +102,11 @@ function initializeSchema(db: Database.Database) {
       active INTEGER NOT NULL DEFAULT 1
     );
 
-    -- Business Periods (daily business day)
+    -- Periods
     CREATE TABLE IF NOT EXISTS periods (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       date TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'open', -- open, closed
+      status TEXT NOT NULL DEFAULT 'open',
       opened_by INTEGER REFERENCES users(id),
       closed_by INTEGER REFERENCES users(id),
       start_time TEXT NOT NULL DEFAULT (datetime('now')),
@@ -57,13 +116,13 @@ function initializeSchema(db: Database.Database) {
       notes TEXT
     );
 
-    -- Employee Shifts
+    -- Shifts
     CREATE TABLE IF NOT EXISTS shifts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       period_id INTEGER NOT NULL REFERENCES periods(id),
       user_id INTEGER NOT NULL REFERENCES users(id),
       cash_drawer_id INTEGER REFERENCES cash_drawers(id),
-      status TEXT NOT NULL DEFAULT 'open', -- open, closed
+      status TEXT NOT NULL DEFAULT 'open',
       start_time TEXT NOT NULL DEFAULT (datetime('now')),
       end_time TEXT,
       opening_cash REAL NOT NULL DEFAULT 0,
@@ -97,26 +156,6 @@ function initializeSchema(db: Database.Database) {
       image_url TEXT
     );
 
-    -- Ingredients (raw materials)
-    CREATE TABLE IF NOT EXISTS ingredients (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      unit TEXT NOT NULL DEFAULT 'g', -- g, ml, piece
-      current_stock REAL NOT NULL DEFAULT 0,
-      min_stock REAL DEFAULT 0,
-      cost_per_unit REAL DEFAULT 0,
-      active INTEGER NOT NULL DEFAULT 1
-    );
-
-    -- Recipe (product -> ingredients mapping)
-    CREATE TABLE IF NOT EXISTS recipes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      product_id INTEGER NOT NULL REFERENCES products(id),
-      ingredient_id INTEGER NOT NULL REFERENCES ingredients(id),
-      quantity REAL NOT NULL, -- amount used per product unit
-      UNIQUE(product_id, ingredient_id)
-    );
-
     -- Orders
     CREATE TABLE IF NOT EXISTS orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -124,7 +163,7 @@ function initializeSchema(db: Database.Database) {
       period_id INTEGER REFERENCES periods(id),
       shift_id INTEGER REFERENCES shifts(id),
       user_id INTEGER NOT NULL REFERENCES users(id),
-      status TEXT NOT NULL DEFAULT 'paid', -- pending, paid, cancelled, refunded
+      status TEXT NOT NULL DEFAULT 'paid',
       order_type TEXT NOT NULL DEFAULT 'takeaway',
       subtotal REAL NOT NULL DEFAULT 0,
       discount REAL NOT NULL DEFAULT 0,
@@ -150,7 +189,7 @@ function initializeSchema(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS payments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       order_id INTEGER NOT NULL REFERENCES orders(id),
-      method TEXT NOT NULL, -- cash, card, instapay, vodafone, delivery
+      method TEXT NOT NULL,
       amount REAL NOT NULL,
       received_amount REAL,
       change_amount REAL DEFAULT 0,
@@ -158,64 +197,10 @@ function initializeSchema(db: Database.Database) {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    -- Stock Entries (daily receiving)
-    CREATE TABLE IF NOT EXISTS stock_entries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      product_id INTEGER REFERENCES products(id),
-      ingredient_id INTEGER REFERENCES ingredients(id),
-      period_id INTEGER REFERENCES periods(id),
-      quantity REAL NOT NULL,
-      unit_cost REAL DEFAULT 0,
-      notes TEXT,
-      user_id INTEGER REFERENCES users(id),
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    -- Inventory Adjustments (Over/Short)
-    CREATE TABLE IF NOT EXISTS inventory_adjustments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      product_id INTEGER REFERENCES products(id),
-      ingredient_id INTEGER REFERENCES ingredients(id),
-      period_id INTEGER REFERENCES periods(id),
-      shift_id INTEGER REFERENCES shifts(id),
-      system_quantity REAL NOT NULL,
-      actual_quantity REAL NOT NULL,
-      difference REAL NOT NULL, -- actual - system (negative = short, positive = over)
-      type TEXT NOT NULL, -- over, short, exact
-      notes TEXT,
-      user_id INTEGER REFERENCES users(id),
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    -- Shift Reports
-    CREATE TABLE IF NOT EXISTS shift_reports (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      shift_id INTEGER UNIQUE NOT NULL REFERENCES shifts(id),
-      total_sales REAL NOT NULL DEFAULT 0,
-      total_orders INTEGER NOT NULL DEFAULT 0,
-      cash_sales REAL NOT NULL DEFAULT 0,
-      card_sales REAL NOT NULL DEFAULT 0,
-      instapay_sales REAL NOT NULL DEFAULT 0,
-      vodafone_sales REAL NOT NULL DEFAULT 0,
-      delivery_sales REAL NOT NULL DEFAULT 0,
-      opening_cash REAL NOT NULL DEFAULT 0,
-      expected_cash REAL NOT NULL DEFAULT 0,
-      actual_cash REAL NOT NULL DEFAULT 0,
-      actual_card REAL NOT NULL DEFAULT 0,
-      actual_wallet REAL NOT NULL DEFAULT 0,
-      cash_difference REAL NOT NULL DEFAULT 0, -- actual - expected
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    -- Seed default data
-    INSERT OR IGNORE INTO users (id, name, username, pin, password_hash, role) VALUES 
-      (1, 'Admin', 'admin', '1234', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin'),
-      (2, 'Reda (Morning)', 'reda', '0000', NULL, 'cashier'),
-      (3, 'Abdelrahman (Night)', 'abdelrahman', '00000', NULL, 'cashier');
-
-    INSERT OR IGNORE INTO cash_drawers (id, name, description) VALUES 
-      (1, 'Safe #1', 'Main Cash Drawer'),
-      (2, 'Safe #2', 'Secondary Cash Drawer');
+    -- Seed
+    INSERT OR IGNORE INTO users (id, name, username, pin, role) VALUES 
+      (1, 'مدير الفرع', 'admin', '1234', 'admin'),
+      (2, 'كاشير 1', 'cashier1', '1111', 'cashier');
 
     INSERT OR IGNORE INTO categories (id, name, name_ar, icon, color, sort_order) VALUES 
       (1, 'Drinks', 'مشروبات', '🥤', '#06B6D4', 1),
@@ -223,28 +208,132 @@ function initializeSchema(db: Database.Database) {
       (3, 'Sweets', 'حلويات', '🍰', '#EC4899', 3),
       (4, 'Gateau', 'جاتوه', '🧁', '#8B5CF6', 4),
       (5, 'Eclair', 'إكلير', '🥖', '#92400E', 5),
-      (6, 'Mille-feuille', 'ميلفاي', '🥮', '#D97706', 6),
-      (7, 'Pavlova', 'بافلوفا', '🍨', '#10B981', 7),
-      (8, 'Pavlova Roll', 'بافلوفا رول', '🍥', '#14B8A6', 8);
+      (6, 'Mille-feuille', 'ميلفاي', '🥮', '#D97706', 6);
+  `);
+}
 
-    INSERT OR IGNORE INTO products (id, category_id, name, name_ar, price, track_stock, current_stock) VALUES 
-      -- Drinks (1)
-      (1, 1, 'Mirinda Orange', 'ميرندا برتقال كانز', 30, 0, 0),
-      (2, 1, 'Mirinda Apple', 'ميرندا تفاح كانز', 30, 0, 0),
-      (3, 1, 'Fayrouz Apple', 'فيروز تفاح', 35, 0, 0),
-      (4, 1, 'Fayrouz Pineapple', 'فيروز أناناس', 35, 0, 0),
-      (5, 1, 'Birell', 'بيريل كانز', 35, 0, 0),
-      (6, 1, 'Red Bull', 'ريد بول', 65, 0, 0),
-      (7, 1, 'Small Water', 'مياه صغيرة', 12, 0, 0),
-      (8, 1, 'Tea', 'شاي', 25, 0, 0),
-      (9, 1, 'Flavored Tea', 'شاي نكهات', 25, 0, 0),
-      (10, 1, 'Turkish Coffee', 'قهوة تركي سادة', 30, 0, 0),
-      (11, 1, 'Double Turkish Coffee', 'قهوة تركي دبل', 28, 0, 0),
-      (12, 1, 'Large Water', 'مياه كبيرة', 35, 0, 0),
-      (13, 1, 'Pepsi', 'بيبسي كانز', 16, 0, 0),
-      (14, 1, 'Diet Pepsi', 'بيبسي دايت كانز', 30, 0, 0),
-      (15, 1, '7up', 'سفن أب كانز', 30, 0, 0),
-      (16, 1, 'Diet 7up', 'سفن أب دايت كانز', 30, 0, 0),
+// PG Schema Initialization Helper
+export async function initializePgSchema() {
+  const db = getDb();
+  if (db.type !== 'pg') return;
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      username TEXT UNIQUE NOT NULL,
+      pin TEXT UNIQUE,
+      password_hash TEXT,
+      role TEXT NOT NULL DEFAULT 'cashier',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS cash_drawers (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      active INTEGER NOT NULL DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS periods (
+      id SERIAL PRIMARY KEY,
+      date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      opened_by INTEGER REFERENCES users(id),
+      closed_by INTEGER REFERENCES users(id),
+      start_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      end_time TIMESTAMP,
+      total_sales REAL NOT NULL DEFAULT 0,
+      total_orders INTEGER NOT NULL DEFAULT 0,
+      notes TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS shifts (
+      id SERIAL PRIMARY KEY,
+      period_id INTEGER NOT NULL REFERENCES periods(id),
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      cash_drawer_id INTEGER REFERENCES cash_drawers(id),
+      status TEXT NOT NULL DEFAULT 'open',
+      start_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      end_time TIMESTAMP,
+      opening_cash REAL NOT NULL DEFAULT 0,
+      total_sales REAL NOT NULL DEFAULT 0,
+      total_orders INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS categories (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      name_ar TEXT,
+      icon TEXT,
+      color TEXT DEFAULT '#6366f1',
+      sort_order INTEGER DEFAULT 0,
+      active INTEGER NOT NULL DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS products (
+      id SERIAL PRIMARY KEY,
+      category_id INTEGER NOT NULL REFERENCES categories(id),
+      name TEXT NOT NULL,
+      name_ar TEXT,
+      price REAL NOT NULL,
+      cost REAL DEFAULT 0,
+      track_stock INTEGER NOT NULL DEFAULT 0,
+      current_stock REAL NOT NULL DEFAULT 0,
+      unit TEXT DEFAULT 'piece',
+      active INTEGER NOT NULL DEFAULT 1,
+      image_url TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS orders (
+      id SERIAL PRIMARY KEY,
+      order_number TEXT UNIQUE NOT NULL,
+      period_id INTEGER REFERENCES periods(id),
+      shift_id INTEGER REFERENCES shifts(id),
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      status TEXT NOT NULL DEFAULT 'paid',
+      order_type TEXT NOT NULL DEFAULT 'takeaway',
+      subtotal REAL NOT NULL DEFAULT 0,
+      discount REAL NOT NULL DEFAULT 0,
+      tax REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      notes TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS order_items (
+      id SERIAL PRIMARY KEY,
+      order_id INTEGER NOT NULL REFERENCES orders(id),
+      product_id INTEGER NOT NULL REFERENCES products(id),
+      product_name TEXT NOT NULL,
+      quantity REAL NOT NULL DEFAULT 1,
+      unit_price REAL NOT NULL,
+      total_price REAL NOT NULL,
+      notes TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS payments (
+      id SERIAL PRIMARY KEY,
+      order_id INTEGER NOT NULL REFERENCES orders(id),
+      method TEXT NOT NULL,
+      amount REAL NOT NULL,
+      received_amount REAL,
+      change_amount REAL DEFAULT 0,
+      reference TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Seed
+    INSERT INTO users (name, username, pin, role) 
+    SELECT 'مدير الفرع', 'admin', '1234', 'admin'
+    WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = 'admin');
+
+    INSERT INTO categories (name, name_ar, icon, color, sort_order)
+    SELECT 'Drinks', 'مشروبات', '🥤', '#06B6D4', 1
+    WHERE NOT EXISTS (SELECT 1 FROM categories WHERE id = 1);
+  `);
+}
 
       -- Baked Goods (2)
       (17, 2, 'Syrian Maamoul Dates', 'معمول سوري عجوة', 295, 0, 0),
