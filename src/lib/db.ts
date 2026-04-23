@@ -1,4 +1,3 @@
-import Database from 'better-sqlite3';
 import { Pool, PoolClient } from 'pg';
 import path from 'path';
 import fs from 'fs';
@@ -12,7 +11,7 @@ if (!isCloud && !fs.existsSync(DB_DIR)) {
   fs.mkdirSync(DB_DIR, { recursive: true });
 }
 
-let _sqliteDb: Database.Database | null = null;
+let _sqliteDb: any = null;
 let _pgPool: Pool | null = null;
 
 export function getDb() {
@@ -22,14 +21,11 @@ export function getDb() {
         connectionString: process.env.DATABASE_URL,
         ssl: { rejectUnauthorized: false }
       });
-      // We don't initialize schema automatically for PG here to avoid connection overhead in each request
-      // But for this simple app, we can do a one-time init
     }
     return {
       type: 'pg',
       pool: _pgPool,
       prepare: (sql: string) => {
-        // Mocking SQLite's prepare for PG
         return {
           run: async (...params: any[]) => {
             const pgSql = sql.replace(/\?/g, (_, i) => `$${i + 1}`);
@@ -50,10 +46,12 @@ export function getDb() {
       exec: async (sql: string) => {
         return await _pgPool!.query(sql);
       },
-      transaction: (fn: any) => fn // simplified for now
+      transaction: (fn: any) => fn 
     };
   } else {
     if (!_sqliteDb) {
+      // Dynamic import to avoid Vercel build issues
+      const Database = require('better-sqlite3');
       _sqliteDb = new Database(DB_PATH);
       _sqliteDb.pragma('journal_mode = WAL');
       _sqliteDb.pragma('foreign_keys = ON');
