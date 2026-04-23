@@ -78,7 +78,7 @@ export function getDb() {
 // I will need to update them or provide a better wrapper. 
 // For now, I'll keep the direct DB functions available.
 
-function initializeSQLiteSchema(db: Database.Database) {
+function initializeSQLiteSchema(db: any) {
   db.exec(`
     -- Users & Auth
     CREATE TABLE IF NOT EXISTS users (
