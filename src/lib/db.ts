@@ -328,80 +328,11 @@ export async function initializePgSchema() {
     WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = 'admin');
 
     INSERT INTO categories (name, name_ar, icon, color, sort_order)
-    SELECT 'Drinks', 'مشروبات', '🥤', '#06B6D4', 1
-    WHERE NOT EXISTS (SELECT 1 FROM categories WHERE id = 1);
-  `);
-}
+    SELECT 'Baked Goods', 'مخبوزات بالكيلو', '🥐', '#F59E0B', 2
+    WHERE NOT EXISTS (SELECT 1 FROM categories WHERE id = 2);
 
-      -- Baked Goods (2)
-      (17, 2, 'Syrian Maamoul Dates', 'معمول سوري عجوة', 295, 0, 0),
-      (18, 2, 'Syrian Maamoul Malban', 'معمول سوري ملبن', 340, 0, 0),
-      (19, 2, 'Semolina Maamoul Plain', 'معمول سميد سادة', 235, 0, 0),
-      (20, 2, 'Semolina Maamoul Cinnamon', 'معمول سميد قرفة', 245, 0, 0),
-      (21, 2, 'Plain Qoras', 'قرص سادة', 245, 0, 0),
-      (22, 2, 'Dates Qoras', 'قرص عجوة', 210, 0, 0),
-      (23, 2, 'Plain Qaraqish', 'قراقيش سادة', 245, 0, 0),
-      (24, 2, 'Black Seed Qaraqish', 'قراقيش حبة البركة', 295, 0, 0),
-      (25, 2, 'Regular Remosh', 'رموش عادية', 315, 0, 0),
-      (26, 2, 'Turkish Remosh', 'رموش تركي', 315, 0, 0),
-      (27, 2, 'Hazelnut Maqlouba', 'مقلوبة بندق', 355, 0, 0),
-      (28, 2, 'Pistachio Maqlouba', 'مقلوبة فستق', 620, 0, 0),
-
-      -- Sweets (3)
-      (29, 3, 'Large Banana Strawberry Pudding', 'بودينج موز وفراولة كبير', 100, 1, 0),
-      (30, 3, 'Small Banana Strawberry Pudding', 'بودينج موز وفراولة صغير', 50, 1, 0),
-      (31, 3, 'Large Banana Pudding Cup', 'كوب بودينج موز كبير', 120, 1, 0),
-      (32, 3, 'Small Banana Pudding Cup', 'كوب بودينج موز صغير', 65, 1, 0),
-      (33, 3, 'Mini Torte Piece', 'قطعة ميني تورتة', 75, 1, 0),
-      (34, 3, 'Molten Cake', 'مولتن كيك', 45, 1, 0),
-      (35, 3, 'Snickers Tart Piece', 'قطعة تارت سنيكرز', 40, 1, 0),
-      (36, 3, 'Assorted Piece', 'قطعة متنوع', 40, 1, 0),
-      (37, 3, 'Blueberry Cheesecake', 'تشيز كيك بلوبيري', 95, 1, 0),
-      (38, 3, 'Strawberry Cheesecake', 'تشيز كيك فراولة', 60, 1, 0),
-      (39, 3, 'Lotus Cheesecake', 'تشيز كيك لوتس', 65, 1, 0),
-      (40, 3, 'Mango Cheesecake', 'تشيز كيك مانجو', 65, 1, 0),
-      (41, 3, 'Blueberry Cheesecake Slice', 'تشيز كيك بلوبيري سلايس', 75, 1, 0),
-      (42, 3, 'Lotus Tiramisu Scoop', 'بولة تراميسو لوتس', 70, 1, 0),
-      (43, 3, 'Cocoa Tiramisu Scoop', 'بولة تراميسو كاكاو', 110, 1, 0),
-      (44, 3, 'Sebastian Cheesecake', 'سباستيان تشيز كيك', 500, 1, 0),
-      (45, 3, 'Despacito', 'ديسباسيتو', 100, 1, 0),
-      (46, 3, 'Lotus Molten Cake', 'مولتن كيك لوتس', 50, 1, 0),
-      (47, 3, 'Tiramisu Cake', 'تراميسو كيك', 400, 1, 0),
-      (48, 3, 'Mango Tiramisu', 'تراميسو مانجو', 97, 1, 0),
-      (49, 3, 'Nutella Konafa Cup', 'كوب كنافة نوتيلا', 70, 1, 0),
-      (50, 3, 'Pistachio Konafa Cup', 'كوب كنافة مسدق', 95, 1, 0),
-
-      -- Gateau (4)
-      (51, 4, 'Chocolate Gateau', 'جاتوه شوكولاتة', 25, 1, 0),
-      (52, 4, 'Vanilla Gateau', 'جاتوه فانيليا', 25, 1, 0),
-      (53, 4, 'Strawberry Gateau', 'جاتوه فراولة', 25, 1, 0),
-      (54, 4, 'Mango Gateau', 'جاتوه مانجو', 25, 1, 0),
-      (55, 4, 'Caramel Gateau', 'جاتوه كراميل', 25, 1, 0),
-      (56, 4, 'Lotus Gateau', 'جاتوه لوتس', 25, 1, 0),
-      (57, 4, 'Oreo Gateau', 'جاتوه أوريو', 25, 1, 0),
-      (58, 4, 'Pistachio Gateau', 'جاتوه فستق', 25, 1, 0),
-      (59, 4, 'Fruit Gateau', 'جاتوه فواكه', 25, 1, 0),
-
-      -- Eclair (5)
-      (60, 5, 'Chocolate Eclair', 'إكلير شوكولاتة', 25, 1, 0),
-      (61, 5, 'Vanilla Eclair', 'إكلير فانيليا', 25, 1, 0),
-      (62, 5, 'Caramel Eclair', 'إكلير كراميل', 25, 1, 0),
-      (63, 5, 'Lotus Eclair', 'إكلير لوتس', 25, 1, 0),
-
-      -- Mille-feuille (6)
-      (64, 6, 'Chocolate Mille-feuille', 'ميلفاي شوكولاتة', 25, 1, 0),
-      (65, 6, 'Vanilla Mille-feuille', 'ميلفاي فانيليا', 25, 1, 0),
-      (66, 6, 'Caramel Mille-feuille', 'ميلفاي كراميل', 25, 1, 0),
-      (67, 6, 'Lotus Mille-feuille', 'ميلفاي لوتس', 25, 1, 0),
-
-      -- Pavlova (7)
-      (68, 7, 'Blueberry Pavlova', 'بافلوفا بلوبيري', 65, 1, 0),
-      (69, 7, 'Strawberry Pavlova', 'بافلوفا فراولة', 65, 1, 0),
-      (70, 7, 'Mango Pavlova', 'بافلوفا مانجو', 65, 1, 0),
-
-      -- Pavlova Roll (8)
-      (71, 8, 'Blueberry Pavlova Roll', 'بافلوفا رول بلوبيري', 390, 1, 0),
-      (72, 8, 'Strawberry Pavlova Roll', 'بافلوفا رول فراولة', 390, 1, 0),
-      (73, 8, 'Mango Pavlova Roll', 'بافلوفا رول مانجو', 390, 1, 0);
+    INSERT INTO products (category_id, name, name_ar, price, cost, track_stock, current_stock, unit)
+    SELECT 2, 'معمول سوري عجوة', 'معمول سوري عجوة', 295, 0, 0, 0, 'kg'
+    WHERE NOT EXISTS (SELECT 1 FROM products WHERE name = 'معمول سوري عجوة');
   `);
 }
